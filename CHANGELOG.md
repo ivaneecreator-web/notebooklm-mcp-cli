@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`ArtifactInfo` gains an optional `error_reason` field** — Returned by the MCP `studio_status` tool. `None` for healthy artifacts; a synthesized string for failed artifacts (with a hint to re-check auth); verbatim from the API if a real `error_reason`/`failure_reason`/`failure_code`/`error` key is present. Backward-compatible: existing callers that only inspect `status` are unaffected.
+- **Bounded in-process conversation history cache (Issue #213)** — The in-process cache of conversation history used to grow without bound, so a long-lived MCP server (typical for an always-on assistant) eventually OOM'd the host. The cache is now bounded by three new env-var knobs (set any to `0` to disable that specific cap):
+    - `NOTEBOOKLM_CONVERSATION_MAX_TURNS` (default `50`) — max turns kept per conversation. Older turns are FIFO-dropped; survivors are renumbered `1..N` so `turn_number` stays a stable 1-indexed position in the current list.
+    - `NOTEBOOKLM_CONVERSATION_MAX_CONVS` (default `500`) — max distinct conversations cached. On overflow, the least-recently-used conversation is evicted. Writes and reads both promote to MRU.
+    - `NOTEBOOKLM_CONVERSATION_MAX_CHARS_PER_TURN` (default `100000`) — per-turn answer character cap as a safety net against pathological payloads. Queries are user input and not truncated.
+    - Public introspection: `get_conversation_cache_stats()` returns `{conversations, total_turns, max_turns_per_conversation, max_conversations, max_chars_per_turn}`.
+    - 13 new tests cover defaults, env-var overrides, invalid-fallback, `0`=unlimited, negative-clamp-to-zero, FIFO trim with renumber, LRU eviction on insert, LRU promotion on read, LRU promotion on write, LRU promotion when migrating to a pre-existing key, answer truncation, stats accuracy, and clear compatibility.
+    - The `--stateless` flag and `NOTEBOOKLM_MCP_STATELESS` env var continue to control the MCP HTTP transport layer only — they do not affect this cache.
 
 ## [0.6.13] - 2026-05-27
 
