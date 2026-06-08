@@ -9,9 +9,46 @@ import threading
 from collections.abc import Awaitable, Callable
 from typing import Any, ParamSpec, TypeAlias, TypeVar, cast
 
+from contextvars import ContextVar
+from pathlib import Path
 from notebooklm_tools.core.client import NotebookLMClient
 from notebooklm_tools.core.utils import extract_cookies_from_chrome_export
 from notebooklm_tools.services.auth import load_cached_tokens
+from notebooklm_tools.utils.config import get_data_dir
+
+mcp_base_url: ContextVar[str] = ContextVar("mcp_base_url", default="")
+_last_mcp_base_url = ""
+_base_url_lock = threading.Lock()
+PUBLIC_DIR: Path = get_data_dir() / "public_artifacts"
+
+
+def set_mcp_base_url(base_url: str) -> object:
+    """Store the current public MCP base URL for tool-generated links."""
+    global _last_mcp_base_url
+    normalized = base_url.rstrip("/")
+    with _base_url_lock:
+        _last_mcp_base_url = normalized
+    return mcp_base_url.set(normalized)
+
+
+def reset_mcp_base_url(token: object) -> None:
+    """Reset the request-local base URL without clearing the process fallback."""
+    mcp_base_url.reset(token)
+
+
+def get_mcp_base_url() -> str:
+    """Return the request-local base URL or the last seen HTTP base URL.
+
+    FastMCP may execute sync tools outside the ASGI context where the middleware
+    set the ContextVar. The process fallback preserves the tunnel host captured
+    from the current or most recent HTTP request.
+    """
+    current = mcp_base_url.get()
+    if current:
+        return current
+    with _base_url_lock:
+        return _last_mcp_base_url
+
 
 # MCP request/response logger
 mcp_logger = logging.getLogger("notebooklm_tools.mcp")

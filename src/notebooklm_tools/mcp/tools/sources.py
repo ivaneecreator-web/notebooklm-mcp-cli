@@ -4,13 +4,15 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from ...services import ServiceError, ValidationError
 from ...services import sources as sources_service
-from ._utils import ResultDict, coerce_list, error_result, get_client, logged_tool
+from ._utils import ResultDict, coerce_list, error_result, get_client, get_mcp_base_url, logged_tool, PUBLIC_DIR
+
 
 
 CHATGPT_FILE_MAX_BYTES = int(os.environ.get("NOTEBOOKLM_CHATGPT_FILE_MAX_BYTES", str(25 * 1024 * 1024)))
@@ -214,7 +216,7 @@ def source_add(
                 PDF, TXT, MD, DOCX, CSV, EPUB, MP3, M4A, WAV, AAC, OGG,
                 OPUS, MP4, JPG, JPEG, PNG, GIF, WEBP. Image-bearing
                 sources (PDF / JPG / PNG / etc.) feed Studio video
-                generation's visual-crop pipeline — charts, photos, and
+                generation's visual-crop pipeline Ã¢â‚¬â€ charts, photos, and
                 diagrams may be extracted as on-screen aids in Video
                 Overviews.
         url: URL to add (for source_type=url)
@@ -416,8 +418,29 @@ def source_describe(source_id: str) -> ResultDict:
         return error_result(str(e))
 
 
+def _source_content_transient(message: str) -> bool:
+    """Return True for NotebookLM source-content states that may resolve after polling."""
+    lowered = message.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "failed to get source content",
+            "no content returned",
+            "not ready",
+            "processing",
+            "indexing",
+            "try again",
+        )
+    )
+
+
 @logged_tool()
-def source_get_content(source_id: str) -> ResultDict:
+def source_get_content(
+    source_id: str,
+    wait: bool = True,
+    wait_timeout: float = 120.0,
+    poll_interval: float = 3.0,
+) -> ResultDict:
     """Get raw text content of a source (no AI processing).
 
     Returns the original indexed text from PDFs, web pages, pasted text,
@@ -425,13 +448,64 @@ def source_get_content(source_id: str) -> ResultDict:
 
     Args:
         source_id: Source UUID
+        wait: If True, poll while NotebookLM is still indexing the source.
+        wait_timeout: Maximum seconds to wait when wait=True.
+        poll_interval: Seconds between readiness checks.
 
-    Returns: content (str), title (str), source_type (str), char_count (int)
+    Returns: content (str), title (str), source_type (str), char_count (int), download_url (str when available)
     """
     try:
         client = get_client()
-        result = sources_service.get_source_content(client, source_id)
+        deadline = time.monotonic() + max(0.0, wait_timeout)
+        attempts = 0
+        last_error: ServiceError | None = None
+
+        while True:
+            attempts += 1
+            try:
+                result = sources_service.get_source_content(client, source_id)
+                if result.get("content") or not wait:
+                    break
+            except ServiceError as e:
+                last_error = e
+                message = f"{e.user_message} {e}"
+                if not wait or not _source_content_transient(message) or time.monotonic() >= deadline:
+                    raise
+            if not wait or time.monotonic() >= deadline:
+                if last_error:
+                    raise last_error
+                return error_result(
+                    "Source content is not ready yet.",
+                    status="pending",
+                    hint="NotebookLM may still be indexing this source. Retry source_get_content shortly or increase wait_timeout.",
+                    source_id=source_id,
+                    attempts=attempts,
+                )
+            time.sleep(max(0.5, poll_interval))
+
+        try:
+            content = result.get("content", "")
+            title = result.get("title", "source")
+            safe_title = _safe_chatgpt_filename(title, default="source")
+            if not safe_title.endswith(".txt") and not safe_title.endswith(".md"):
+                safe_title += ".txt"
+
+            PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+            pub_path = PUBLIC_DIR / safe_title
+            if pub_path.exists():
+                pub_path = PUBLIC_DIR / f"{Path(safe_title).stem}-{os.urandom(2).hex()}{Path(safe_title).suffix}"
+
+            pub_path.write_text(content, encoding="utf-8")
+
+            base_url = get_mcp_base_url()
+            if base_url:
+                result["download_url"] = f"{base_url}/artifacts/{quote(pub_path.name)}"
+        except Exception as e:
+            import logging
+            logging.getLogger("notebooklm_tools.mcp").warning(f"Failed to copy public source file: {e}")
+
         return {"status": "success", **result}
+
     except ServiceError as e:
         return error_result(e.user_message, hint=e.hint)
     except Exception as e:
