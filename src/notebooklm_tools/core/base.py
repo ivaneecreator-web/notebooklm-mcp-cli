@@ -20,7 +20,6 @@ from typing import Any
 
 import httpx
 
-import notebooklm_tools.utils.env_sanitize as _env_sanitize  # noqa: F401
 from notebooklm_tools.utils.config import get_base_url
 
 from . import constants
