@@ -348,3 +348,67 @@ class TestDownloadUrlCookies:
         headers = captured["headers"]
         assert headers.get("Sec-Fetch-Site") == "cross-site"
         assert headers.get("Referer") == f"{mixin._get_base_url()}/"
+
+
+class TestDownloadMindMapNoteFiltering:
+    """The notes store mixes notes and mind maps; download_mind_map must only
+    consider entries whose content is real mind map JSON."""
+
+    @staticmethod
+    def _mixin_with_entries(entries):
+        from unittest.mock import patch
+
+        from notebooklm_tools.core.download import DownloadMixin
+
+        with patch.object(DownloadMixin, "_refresh_auth_tokens"):
+            mixin = DownloadMixin(cookies={"test": "cookie"}, csrf_token="test")
+        patcher = patch.object(mixin, "_call_rpc", return_value=[entries])
+        patcher.start()
+        return mixin, patcher
+
+    _NOTE = [
+        "note-1",
+        ["note-1", "Prose note content, not JSON.", [None, None, None], None, "A Note"],
+        1,
+    ]
+    _MIND_MAP = [
+        "mm-1",
+        ["mm-1", '{"name": "Root", "children": []}', [None, None, None], None, "Real Map"],
+        1,
+    ]
+
+    def test_unqualified_download_skips_notes(self, tmp_path):
+        mixin, patcher = self._mixin_with_entries([self._NOTE, self._MIND_MAP])
+        try:
+            out = mixin.download_mind_map("nb-1", str(tmp_path / "mm.json"))
+        finally:
+            patcher.stop()
+        import json as _json
+
+        data = _json.loads((tmp_path / "mm.json").read_text(encoding="utf-8"))
+        assert data == {"name": "Root", "children": []}
+        assert out == str(tmp_path / "mm.json")
+
+    def test_note_id_reports_not_found(self, tmp_path):
+        import pytest as _pytest
+
+        from notebooklm_tools.core.errors import ArtifactNotFoundError
+
+        mixin, patcher = self._mixin_with_entries([self._NOTE, self._MIND_MAP])
+        try:
+            with _pytest.raises(ArtifactNotFoundError):
+                mixin.download_mind_map("nb-1", str(tmp_path / "mm.json"), "note-1")
+        finally:
+            patcher.stop()
+
+    def test_only_notes_reports_not_ready(self, tmp_path):
+        import pytest as _pytest
+
+        from notebooklm_tools.core.errors import ArtifactNotReadyError
+
+        mixin, patcher = self._mixin_with_entries([self._NOTE])
+        try:
+            with _pytest.raises(ArtifactNotReadyError):
+                mixin.download_mind_map("nb-1", str(tmp_path / "mm.json"))
+        finally:
+            patcher.stop()

@@ -23,6 +23,7 @@ from .errors import (
 from .errors import (
     ClientAuthenticationError as AuthenticationError,
 )
+from .utils import is_mind_map_json
 
 
 class DownloadMixin(BaseClient):
@@ -669,6 +670,19 @@ class DownloadMixin(BaseClient):
         if result and isinstance(result, list) and len(result) > 0:  # noqa: SIM102
             if isinstance(result[0], list):
                 mind_maps = result[0]
+
+        # The notes store holds both regular notes (prose content) and mind
+        # maps (JSON content) — keep only real mind maps so an unqualified
+        # download can't pick a note and a note ID reports "not found".
+        mind_maps = [
+            mm
+            for mm in mind_maps
+            if isinstance(mm, list)
+            and len(mm) > 1
+            and isinstance(mm[1], list)
+            and len(mm[1]) > 1
+            and is_mind_map_json(mm[1][1])
+        ]
 
         if not mind_maps:
             raise ArtifactNotReadyError("mind_map")
