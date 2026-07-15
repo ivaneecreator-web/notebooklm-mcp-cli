@@ -318,6 +318,7 @@ pipeline(action="run", notebook_id="abc", pipeline_name="ingest-and-podcast", in
 | `NOTEBOOKLM_QUERY_TIMEOUT` | Query timeout (seconds) |
 | `NOTEBOOKLM_BASE_URL` | Override base URL for Enterprise/Workspace (default: `https://notebooklm.google.com`) |
 | `NOTEBOOKLM_DOWNLOAD_DIR` | Optional directory boundary for artifact downloads. Unset preserves the default behavior. |
+| `NOTEBOOKLM_ALLOWED_FILE_DIRS` | Optional OS-separated list of directories allowed for local file sources. Unset means unrestricted. |
 | `NOTEBOOKLM_DISABLED_GROUPS` | Comma-separated tool groups to hide (see [Selective tool exposure](#selective-tool-exposure)) |
 | `NOTEBOOKLM_DISABLED_TOOLS` | Comma-separated individual tools to hide |
 | `NOTEBOOKLM_ENABLED_TOOLS` | Comma-separated tools to re-enable, overriding the two above |
